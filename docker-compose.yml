@@ -1,0 +1,127 @@
+version: "3"
+
+services:
+  booksapp:
+    container_name: books-app
+    build: .
+    image: gock/books-app:0.0.1
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+      - rabbitmq
+    environment:
+      - spring.profiles.active=docker
+      - spring.datasource.url=jdbc:postgresql://postgres:5432/books
+      - spring.datasource.username=books
+      - spring.datasource.password=postgres
+      - message.broker.implementation=rabbitmq
+      - rabbitmq.book.topic.name=books-topic
+      - spring.rabbitmq.host=rabbitmq
+      - spring.rabbitmq.port=5672
+      - spring.rabbitmq.username=guest
+      - spring.rabbitmq.password=guest
+
+  postgres:
+    container_name: books-postgres
+    restart: always
+    image: postgres:15.1
+    environment:
+      - POSTGRES_USER=books
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=books
+    volumes:
+      - books-postgres:/var/lib/postgresql/data
+
+  rabbitmq:
+    container_name: books-rabbitmq
+    image: rabbitmq:3.11.4-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - books-rabbitmq:/var/lib/rabbitmq
+
+  reactivelistenerapp:
+    container_name: reactivelistener-app
+    build: ../reactivelistener
+    image: gock/reactivelistener-app:0.0.1
+    ports:
+      - "8081:8081"
+    depends_on:
+      - rabbitmq
+    environment:
+      - spring.rabbitmq.host=rabbitmq
+      - spring.rabbitmq.port=5672
+      - spring.rabbitmq.username=guest
+      - spring.rabbitmq.password=guest
+      - rabbitmq.book.topic.name=books-topic
+      - rabbitmq.book.queue.name=books-queue-for-reactivelistener
+      - spring.rabbitmq.listener.simple.batch-size=3
+
+  elasticsearch:
+    container_name: elasticsearch
+    image: elasticsearch:8.4.3
+    restart: always
+    ports:
+      - "9200:9200"
+    environment:
+      - xpack.security.enabled=false
+      - discovery.type=single-node
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+
+  kibana:
+    container_name: kibana
+    image: kibana:8.4.3
+    restart: always
+    ports:
+      - "5601:5601"
+    depends_on:
+      - elasticsearch
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+
+  logstash:
+    container_name: logstash
+    image: logstash:8.4.3
+    restart: always
+    depends_on:
+      - elasticsearch
+      - rabbitmq
+    environment:
+      - pipeline.batch.size=100
+      - pipeline.batch.delay=10000
+      - config.string=
+          input {
+          rabbitmq {
+          id => "rabbitmyq_id"
+          host => "rabbitmq"
+          port => 5672
+          queue => "logstash-books-test4"
+          durable => "true"
+          exchange => "books-topic"
+          key => "book.*"
+          ack => false
+          }
+          }
+
+          output {
+          stdout {}
+          elasticsearch {
+          hosts => ["http://elasticsearch:9200"]
+          index => "test4"
+          }
+          }
+    volumes:
+      - logstash-data:/usr/share/logstash
+
+volumes:
+  books-postgres:
+    external: false
+  books-rabbitmq:
+    external: false
+  elasticsearch-data:
+    external: false
+  logstash-data:
+    external: false
